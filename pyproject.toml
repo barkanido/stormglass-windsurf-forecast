@@ -1,0 +1,7 @@
+[project]
+name = "stormglass"
+version = "0.1.0"
+dependencies = [
+    "arrow~=1.0",
+    "requests~=2.0",
+]
