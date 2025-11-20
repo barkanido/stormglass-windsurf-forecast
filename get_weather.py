@@ -79,7 +79,7 @@ def _transform_hour(hour, timezone='Asia/Jerusalem'):
     hour = _convert_hour_time(hour, timezone)
     return hour
 
-def process_hours(hours, timezone='Asia/Jerusalem'):
+def _process_hours(hours, timezone='Asia/Jerusalem'):
     """
     Process all hourly data with transformations in a single pass.
     
@@ -96,6 +96,28 @@ def process_hours(hours, timezone='Asia/Jerusalem'):
     """
     return [_transform_hour(hour, timezone) for hour in hours]
 
+def _update_meta(meta):
+    """
+    Update the meta information with report generation time and units.
+    
+    Args:
+        meta: Meta information dictionary
+        
+    Returns:
+        Updated meta information dictionary
+    """
+    meta['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
+    meta['units'] = {
+        'windSpeed': 'Speed of wind at 10m above ground in knots',
+        'gust': 'Wind gust in knots',
+        'airTemperature': 'Air temperature in degrees celsius',
+        'swellHeight': 'Height of swell waves in meters',
+        'swellPeriod': 'Period of swell waves in seconds',
+        'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
+        'waterTemperature': 'Water temperature in degrees celsius',
+        'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
+    }
+    return meta
 
 # ============================================================================
 # Utility functions
@@ -124,23 +146,8 @@ def get_api_key():
     
     return api_key
 
-# ============================================================================
-# Main script
-# ============================================================================
 
-if __name__ == "__main__":
-    # Get first hour of today
-    start = arrow.now().floor('day')
-    # Get last of day after tomorrow
-    end = arrow.now().shift(days=2).ceil('day')
-
-    api_key = get_api_key()
-    stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
-
-    lat = 32.486722
-    lng = 34.888722
-    # 32°29'12.2"N 34°53'19.4"E
-
+def _fetch_weather_data(start, end, api_key, stormglass_endpoint, lat, lng):
     params = [
         "airTemperature",
         "gust",
@@ -167,14 +174,30 @@ if __name__ == "__main__":
       headers={
         'Authorization': api_key
       }
-      
     )
 
     json_data = response.json()
+    return json_data
+
+if __name__ == "__main__":
+    # Get first hour of today
+    start = arrow.now().floor('day')
+    # Get last of day after tomorrow
+    end = arrow.now().shift(days=2).ceil('day')
+
+    api_key = get_api_key()
+    stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
+
+    lat = 32.486722
+    lng = 34.888722
+    # 32°29'12.2"N 34°53'19.4"E
+
+    json_data = _fetch_weather_data(start, end, api_key, stormglass_endpoint, lat, lng)
 
     # Process all hourly data with transformations in a single pass
-    json_data['hours'] = process_hours(json_data['hours'])
+    json_data['hours'] = _process_hours(json_data['hours'])
 
+    json_data['meta'] = _update_meta(json_data['meta'])
     # Add current time to report
     json_data['meta']['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
     json_data['meta']['units'] = {
