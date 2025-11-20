@@ -9,9 +9,6 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Conversion factor: meters per second to knots
-MS_TO_KNOTS = 1.94384
-
 # ============================================================================
 # Custom Exceptions
 # ============================================================================
@@ -94,6 +91,7 @@ def _convert_hour_speeds(hour):
     Returns:
         Dictionary with wind speeds converted to knots
     """
+    MS_TO_KNOTS = 1.94384
     return {
         key: value * MS_TO_KNOTS if key in ['windSpeed', 'gust'] else value
         for key, value in hour.items()
