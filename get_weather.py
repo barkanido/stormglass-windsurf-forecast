@@ -2,6 +2,7 @@ import requests
 import arrow
 import json
 import os
+import argparse
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -189,11 +190,79 @@ def _read_weather_data_file(weather_data_file_name):
         json_data = json.load(f)
         print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
 
+def parse_arguments():
+    """
+    Parse and validate command line arguments.
+    
+    Returns:
+        argparse.Namespace: Parsed arguments with days_ahead and first_day_offset
+        
+    Raises:
+        SystemExit: If validation fails
+    """
+    parser = argparse.ArgumentParser(
+        description='Fetch weather forecast data from Storm Glass API',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Get 4-day forecast starting today (default)
+  python get_weather.py
+  
+  # Get 3-day forecast starting today
+  python get_weather.py --days-ahead 3
+  
+  # Get 2-day forecast starting 3 days from now
+  python get_weather.py --days-ahead 2 --first-day-offset 3
+  
+  # Get 5-day forecast starting tomorrow
+  python get_weather.py --days-ahead 5 --first-day-offset 1
+
+Note: days-ahead + first-day-offset must not exceed 7 to ensure reliable forecasts.
+        """
+    )
+    
+    parser.add_argument(
+        '--days-ahead',
+        type=int,
+        default=4,
+        metavar='N',
+        help='Number of days to forecast ahead (1-7, default: 4)'
+    )
+    
+    parser.add_argument(
+        '--first-day-offset',
+        type=int,
+        default=0,
+        metavar='N',
+        help='Number of days to offset the start date (0-7, default: 0 for today)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.days_ahead < 1 or args.days_ahead > 7:
+        parser.error(f"days-ahead must be between 1 and 7 (got {args.days_ahead})")
+    
+    if args.first_day_offset < 0 or args.first_day_offset > 7:
+        parser.error(f"first-day-offset must be between 0 and 7 (got {args.first_day_offset})")
+    
+    # Check that total doesn't exceed 7 days for reliable forecasts
+    total_days = args.days_ahead + args.first_day_offset
+    if total_days > 7:
+        parser.error(
+            f"days-ahead ({args.days_ahead}) + first-day-offset ({args.first_day_offset}) "
+            f"= {total_days} exceeds maximum of 7 days for reliable forecasts"
+        )
+    
+    return args
+
 if __name__ == "__main__":
-    # Get first hour of today
-    start = arrow.now().floor('day')
-    # Get last of day after tomorrow
-    end = arrow.now().shift(days=2).ceil('day')
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Calculate start and end dates based on arguments
+    start = arrow.now().shift(days=args.first_day_offset).floor('day')
+    end = arrow.now().shift(days=args.first_day_offset + args.days_ahead - 1).ceil('day')
 
     api_key = get_api_key()
     stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
@@ -209,8 +278,8 @@ if __name__ == "__main__":
 
     json_data['meta'] = _update_meta(json_data['meta'])
     
-    # pretty print the json data to a files with timestamp
-    weather_data_file_name = 'weather_data_3d_{}.json'.format(start.format("YYMMDD"))
+    # Generate filename with actual number of days
+    weather_data_file_name = 'weather_data_{}d_{}.json'.format(args.days_ahead, start.format("YYMMDD"))
     _write_weather_json(json_data, weather_data_file_name)
     print(json_data)
     _read_weather_data_file(weather_data_file_name)
