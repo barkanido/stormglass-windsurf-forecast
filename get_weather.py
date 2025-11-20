@@ -208,19 +208,7 @@ if __name__ == "__main__":
     json_data['hours'] = _process_hours(json_data['hours'])
 
     json_data['meta'] = _update_meta(json_data['meta'])
-    # Add current time to report
-    json_data['meta']['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
-    json_data['meta']['units'] = {
-        'windSpeed': 'Speed of wind at 10m above ground in knots',
-        'gust': 'Wind gust in knots',
-        'airTemperature': 'Air temperature in degrees celsius',
-        'swellHeight': 'Height of swell waves in meters',
-        'swellPeriod': 'Period of swell waves in seconds',
-        'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
-        'waterTemperature': 'Water temperature in degrees celsius',
-        'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
-    }
-
+    
     # pretty print the json data to a files with timestamp
     weather_data_file_name = 'weather_data_3d_{}.json'.format(start.format("YYMMDD"))
     _write_weather_json(json_data, weather_data_file_name)
