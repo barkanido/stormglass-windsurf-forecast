@@ -147,7 +147,8 @@ def get_api_key():
     return api_key
 
 
-def _fetch_weather_data(start, end, api_key, stormglass_endpoint, lat, lng):
+def _fetch_weather_data(start, end, api_key, lat, lng):
+    stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
     params = [
         "airTemperature",
         "gust",
@@ -179,6 +180,15 @@ def _fetch_weather_data(start, end, api_key, stormglass_endpoint, lat, lng):
     json_data = response.json()
     return json_data
 
+def _write_weather_json(json_data, weather_data_file_name):
+    with open(weather_data_file_name, 'w') as f:
+        json.dump(json_data, f, indent=4)
+
+def _read_weather_data_file(weather_data_file_name):
+    with open(weather_data_file_name, 'r') as f:
+        json_data = json.load(f)
+        print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
+
 if __name__ == "__main__":
     # Get first hour of today
     start = arrow.now().floor('day')
@@ -192,7 +202,7 @@ if __name__ == "__main__":
     lng = 34.888722
     # 32°29'12.2"N 34°53'19.4"E
 
-    json_data = _fetch_weather_data(start, end, api_key, stormglass_endpoint, lat, lng)
+    json_data = _fetch_weather_data(start, end, api_key, lat, lng)
 
     # Process all hourly data with transformations in a single pass
     json_data['hours'] = _process_hours(json_data['hours'])
@@ -213,9 +223,6 @@ if __name__ == "__main__":
 
     # pretty print the json data to a files with timestamp
     weather_data_file_name = 'weather_data_3d_{}.json'.format(start.format("YYMMDD"))
-    with open(weather_data_file_name, 'w') as f:
-        json.dump(json_data, f, indent=4)
+    _write_weather_json(json_data, weather_data_file_name)
     print(json_data)
-    with open(weather_data_file_name, 'r') as f:
-        json_data = json.load(f)
-        print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
+    _read_weather_data_file(weather_data_file_name)
