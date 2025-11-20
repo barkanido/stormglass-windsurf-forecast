@@ -128,70 +128,71 @@ def get_api_key():
 # Main script
 # ============================================================================
 
-# Get first hour of today
-start = arrow.now().floor('day')
-# Get last of day after tomorrow
-end = arrow.now().shift(days=2).ceil('day')
+if __name__ == "__main__":
+    # Get first hour of today
+    start = arrow.now().floor('day')
+    # Get last of day after tomorrow
+    end = arrow.now().shift(days=2).ceil('day')
 
-api_key = get_api_key()
-stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
+    api_key = get_api_key()
+    stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
 
-lat = 32.486722
-lng = 34.888722
-# 32°29'12.2"N 34°53'19.4"E
+    lat = 32.486722
+    lng = 34.888722
+    # 32°29'12.2"N 34°53'19.4"E
 
-params = [
-    "airTemperature",
-    "gust",
-    "swellDirection",
-    "swellHeight",
-    "swellPeriod",
-    "waterTemperature",
-    "windDirection",
-    "windSpeed",
-]
+    params = [
+        "airTemperature",
+        "gust",
+        "swellDirection",
+        "swellHeight",
+        "swellPeriod",
+        "waterTemperature",
+        "windDirection",
+        "windSpeed",
+    ]
 
-print(f"Fetching weather data from {start} to {end} for coordinates ({lat}, {lng})")
+    print(f"Fetching weather data from {start} to {end} for coordinates ({lat}, {lng})")
 
-response = requests.get(
-  stormglass_endpoint,
-  params={
-    'lat': lat,
-    'lng': lng,
-    'params': ','.join(params),
-    'start': start.to('UTC').timestamp(),  # Convert to UTC timestamp
-    'end': end.to('UTC').timestamp(),
-    'source': 'sg'  # Using Stormglass as the data source
-  },
-  headers={
-    'Authorization': api_key
-  }
-  
-)
+    response = requests.get(
+      stormglass_endpoint,
+      params={
+        'lat': lat,
+        'lng': lng,
+        'params': ','.join(params),
+        'start': start.to('UTC').timestamp(),  # Convert to UTC timestamp
+        'end': end.to('UTC').timestamp(),
+        'source': 'sg'  # Using Stormglass as the data source
+      },
+      headers={
+        'Authorization': api_key
+      }
+      
+    )
 
-json_data = response.json()
+    json_data = response.json()
 
-# Process all hourly data with transformations in a single pass
-json_data['hours'] = process_hours(json_data['hours'])
+    # Process all hourly data with transformations in a single pass
+    json_data['hours'] = process_hours(json_data['hours'])
 
-# Add current time to report
-json_data['meta']['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
-json_data['meta']['units'] = {
-    'windSpeed': 'Speed of wind at 10m above ground in knots',
-    'gust': 'Wind gust in knots',
-    'airTemperature': 'Air temperature in degrees celsius',
-    'swellHeight': 'Height of swell waves in meters',
-    'swellPeriod': 'Period of swell waves in seconds',
-    'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
-    'waterTemperature': 'Water temperature in degrees celsius',
-    'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
-}
+    # Add current time to report
+    json_data['meta']['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
+    json_data['meta']['units'] = {
+        'windSpeed': 'Speed of wind at 10m above ground in knots',
+        'gust': 'Wind gust in knots',
+        'airTemperature': 'Air temperature in degrees celsius',
+        'swellHeight': 'Height of swell waves in meters',
+        'swellPeriod': 'Period of swell waves in seconds',
+        'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
+        'waterTemperature': 'Water temperature in degrees celsius',
+        'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
+    }
 
-# pretty print the json data to a files with timestamp
-weather_data_file_name = 'weather_data_3d_{}.json'.format(start.format("YYMMDD"))
-with open(weather_data_file_name, 'w') as f:
-    json.dump(json_data, f, indent=4)
-print(json_data)
-with open(weather_data_file_name, 'r') as f:
-    json_data = json.load(f)
-    print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
+    # pretty print the json data to a files with timestamp
+    weather_data_file_name = 'weather_data_3d_{}.json'.format(start.format("YYMMDD"))
+    with open(weather_data_file_name, 'w') as f:
+        json.dump(json_data, f, indent=4)
+    print(json_data)
+    with open(weather_data_file_name, 'r') as f:
+        json_data = json.load(f)
+        print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
