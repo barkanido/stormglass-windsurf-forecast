@@ -10,66 +10,96 @@ load_dotenv()
 # Conversion factor: meters per second to knots
 MS_TO_KNOTS = 1.94384
 
+# ============================================================================
+# New functional-style transformation functions (single-pass processing)
+# ============================================================================
 
-def flatten_sg_structure(hours):
+def _flatten_hour(hour):
     """
-    Flatten the nested 'sg' structure from each hour's data.
+    Flatten the nested 'sg' structure for a single hour's data.
     
     Args:
-        hours: List of hourly weather data dictionaries
+        hour: Single hourly weather data dictionary
         
     Returns:
-        List of flattened hourly data dictionaries
+        Dictionary with flattened structure
     """
-    return [
-        {
-            **{key: value['sg'] if isinstance(value, dict) and 'sg' in value else value 
-               for key, value in hour.items()}
-        }
-        for hour in hours
-    ]
+    return {
+        key: value['sg'] if isinstance(value, dict) and 'sg' in value else value 
+        for key, value in hour.items()
+    }
 
-
-def convert_speed_to_knots(hours):
+def _convert_hour_speeds(hour):
     """
-    Convert windSpeed and gust from m/s to knots.
+    Convert windSpeed and gust from m/s to knots for a single hour.
     
     Args:
-        hours: List of hourly weather data dictionaries
+        hour: Single hourly weather data dictionary
         
     Returns:
-        List of hourly data with wind speeds converted to knots
+        Dictionary with wind speeds converted to knots
     """
-    return [
-        {
-            **{key: value * MS_TO_KNOTS if key in ['windSpeed', 'gust'] else value
-               for key, value in hour.items()}
-        }
-        for hour in hours
-    ]
+    return {
+        key: value * MS_TO_KNOTS if key in ['windSpeed', 'gust'] else value
+        for key, value in hour.items()
+    }
 
-
-def convert_time_to_local(hours, timezone='Asia/Jerusalem'):
+def _convert_hour_time(hour, timezone='Asia/Jerusalem'):
     """
-    Convert the time field of each hour to local time string.
-    
-    The function uses arrow.get() which automatically parses ISO 8601 timestamps
-    (typically in UTC from the Stormglass API) and converts them to the target timezone.
+    Convert the time field for a single hour to local time string.
     
     Args:
-        hours: List of hourly weather data dictionaries with 'time' field in ISO 8601 format
+        hour: Single hourly weather data dictionary with 'time' field in ISO 8601 format
         timezone: Target timezone (default: 'Asia/Jerusalem')
         
     Returns:
-        List of hourly data with times converted to local timezone string format 'YYYY-MM-DD HH:mm'
+        Dictionary with time converted to local timezone string format 'YYYY-MM-DD HH:mm'
     """
-    return [
-        {
-            **hour,
-            'time': arrow.get(hour['time']).to(timezone).format('YYYY-MM-DD HH:mm')
-        }
-        for hour in hours
-    ]
+    return {
+        **hour,
+        'time': arrow.get(hour['time']).to(timezone).format('YYYY-MM-DD HH:mm')
+    }
+
+def _transform_hour(hour, timezone='Asia/Jerusalem'):
+    """
+    Apply all transformations to a single hour's data.
+    
+    This combines flattening, speed conversion, and time conversion into
+    a single transformation pipeline for efficient processing.
+    
+    Args:
+        hour: Single hourly weather data dictionary
+        timezone: Target timezone (default: 'Asia/Jerusalem')
+        
+    Returns:
+        Fully transformed hourly data dictionary
+    """
+    hour = _flatten_hour(hour)
+    hour = _convert_hour_speeds(hour)
+    hour = _convert_hour_time(hour, timezone)
+    return hour
+
+def process_hours(hours, timezone='Asia/Jerusalem'):
+    """
+    Process all hourly data with transformations in a single pass.
+    
+    This function efficiently applies all transformations (flattening,
+    speed conversion, and time conversion) to each hour in a single
+    iteration, rather than making multiple passes over the data.
+    
+    Args:
+        hours: List of hourly weather data dictionaries
+        timezone: Target timezone (default: 'Asia/Jerusalem')
+        
+    Returns:
+        List of fully transformed hourly data dictionaries
+    """
+    return [_transform_hour(hour, timezone) for hour in hours]
+
+
+# ============================================================================
+# Utility functions
+# ============================================================================
 
 def get_api_key():
     """
@@ -93,6 +123,10 @@ def get_api_key():
         )
     
     return api_key
+
+# ============================================================================
+# Main script
+# ============================================================================
 
 # Get first hour of today
 start = arrow.now().floor('day')
@@ -137,16 +171,10 @@ response = requests.get(
 
 json_data = response.json()
 
-# Step 1: Flatten the nested 'sg' structure
-json_data['hours'] = flatten_sg_structure(json_data['hours'])
+# Process all hourly data with transformations in a single pass
+json_data['hours'] = process_hours(json_data['hours'])
 
-# Step 2: Convert windSpeed and gust from m/s to knots
-json_data['hours'] = convert_speed_to_knots(json_data['hours'])
-
-# Step 3: Convert the "time" field of each hour to local time string (Jerusalem time)
-json_data['hours'] = convert_time_to_local(json_data['hours'])
-
-# step 4: add current time to report
+# Add current time to report
 json_data['meta']['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
 json_data['meta']['units'] = {
     'windSpeed': 'Speed of wind at 10m above ground in knots',
