@@ -3,6 +3,7 @@ import arrow
 import json
 import os
 import argparse
+import sys
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -10,6 +11,59 @@ load_dotenv()
 
 # Conversion factor: meters per second to knots
 MS_TO_KNOTS = 1.94384
+
+# ============================================================================
+# Custom Exceptions
+# ============================================================================
+
+class StormGlassAPIError(Exception):
+    """
+    Custom exception for Storm Glass API errors.
+    
+    Attributes:
+        status_code: HTTP status code from the API response
+        error_code: Storm Glass specific error code
+        message: User-friendly error message
+    """
+    def __init__(self, status_code, message):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(self.message)
+
+# ============================================================================
+# Error Code Mappings
+# ============================================================================
+
+STORMGLASS_ERROR_MESSAGES = {
+    402: (
+        "Payment Required: You've exceeded the daily request limit for your subscription.\n"
+        "Please consider upgrading if this happens frequently, or try again tomorrow."
+    ),
+    403: (
+        "Forbidden: Your API key was not provided or is malformed.\n"
+        "Please check that STORMGLASS_API_KEY in your .env file is correct."
+    ),
+    404: (
+        "Not Found: The requested API resource does not exist.\n"
+        "Please verify the API endpoint and review the API documentation."
+    ),
+    405: (
+        "Method Not Allowed: The API resource was requested using an unsupported method.\n"
+        "Please review the API documentation for correct usage."
+    ),
+    410: (
+        "Gone: You've requested a legacy API resource that is no longer available.\n"
+        "Please update your code to use the current API version."
+    ),
+    422: (
+        "Unprocessable Content: Invalid request parameters.\n"
+        "Please verify your coordinates, date range, and other parameters are correct."
+    ),
+    503: (
+        "Service Unavailable: Storm Glass is experiencing technical difficulties.\n"
+        "Please try again later."
+    )
+}
 
 # ============================================================================
 # New functional-style transformation functions (single-pass processing)
@@ -149,6 +203,22 @@ def get_api_key():
 
 
 def _fetch_weather_data(start, end, api_key, lat, lng):
+    """
+    Fetch weather data from Storm Glass API.
+    
+    Args:
+        start: Start date/time for the forecast
+        end: End date/time for the forecast
+        api_key: Storm Glass API key
+        lat: Latitude coordinate
+        lng: Longitude coordinate
+        
+    Returns:
+        dict: Weather data JSON response
+        
+    Raises:
+        StormGlassAPIError: If the API returns an error status code
+    """
     stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
     params = [
         "airTemperature",
@@ -178,6 +248,20 @@ def _fetch_weather_data(start, end, api_key, lat, lng):
       }
     )
 
+    # Check for error status codes
+    if response.status_code in STORMGLASS_ERROR_MESSAGES:
+        error_message = STORMGLASS_ERROR_MESSAGES[response.status_code]
+        raise StormGlassAPIError(response.status_code, error_message)
+    
+    # Check for any other non-200 status codes
+    if response.status_code != 200:
+        error_message = (
+            f"Unexpected API error (HTTP {response.status_code}).\n"
+            f"Response: {response.text}\n"
+            "Please check the API documentation or try again later."
+        )
+        raise StormGlassAPIError(response.status_code, error_message)
+
     json_data = response.json()
     return json_data
 
@@ -189,6 +273,23 @@ def _read_weather_data_file(weather_data_file_name):
     with open(weather_data_file_name, 'r') as f:
         json_data = json.load(f)
         print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
+
+def print_error_message(error_type, message, error_code=None):
+    """
+    Print a nicely formatted error message.
+    
+    Args:
+        error_type: Type of error (e.g., "STORM GLASS API ERROR", "CONFIGURATION ERROR")
+        message: The error message to display
+        error_code: Optional error code to display
+    """
+    print("\n" + "="*70)
+    print(error_type)
+    print("="*70)
+    if error_code is not None:
+        print(f"\nError Code: {error_code}")
+    print(f"\n{message}")
+    print("\n" + "="*70)
 
 def parse_arguments():
     """
@@ -257,29 +358,55 @@ Note: days-ahead + first-day-offset must not exceed 7 to ensure reliable forecas
     return args
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    args = parse_arguments()
-    
-    # Calculate start and end dates based on arguments
-    start = arrow.now().shift(days=args.first_day_offset).floor('day')
-    end = arrow.now().shift(days=args.first_day_offset + args.days_ahead - 1).ceil('day')
+    try:
+        # Parse command line arguments
+        args = parse_arguments()
+        
+        # Calculate start and end dates based on arguments
+        start = arrow.now().shift(days=args.first_day_offset).floor('day')
+        end = arrow.now().shift(days=args.first_day_offset + args.days_ahead - 1).ceil('day')
 
-    api_key = get_api_key()
-    stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
+        api_key = get_api_key()
+        stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
 
-    lat = 32.486722
-    lng = 34.888722
-    # 32°29'12.2"N 34°53'19.4"E
+        lat = 32.486722
+        lng = 34.888722
+        # 32°29'12.2"N 34°53'19.4"E
 
-    json_data = _fetch_weather_data(start, end, api_key, lat, lng)
+        json_data = _fetch_weather_data(start, end, api_key, lat, lng)
 
-    # Process all hourly data with transformations in a single pass
-    json_data['hours'] = _process_hours(json_data['hours'])
+        # Process all hourly data with transformations in a single pass
+        json_data['hours'] = _process_hours(json_data['hours'])
 
-    json_data['meta'] = _update_meta(json_data['meta'])
-    
-    # Generate filename with actual number of days
-    weather_data_file_name = 'weather_data_{}d_{}.json'.format(args.days_ahead, start.format("YYMMDD"))
-    _write_weather_json(json_data, weather_data_file_name)
-    print(json_data)
-    _read_weather_data_file(weather_data_file_name)
+        json_data['meta'] = _update_meta(json_data['meta'])
+        
+        # Generate filename with actual number of days
+        weather_data_file_name = 'weather_data_{}d_{}.json'.format(args.days_ahead, start.format("YYMMDD"))
+        _write_weather_json(json_data, weather_data_file_name)
+        print(json_data)
+        _read_weather_data_file(weather_data_file_name)
+        
+    except StormGlassAPIError as e:
+        print_error_message("STORM GLASS API ERROR", e.message, e.status_code)
+        sys.exit(1)
+        
+    except ValueError as e:
+        print_error_message("CONFIGURATION ERROR", str(e))
+        sys.exit(1)
+        
+    except requests.exceptions.RequestException as e:
+        error_msg = (
+            f"Failed to connect to Storm Glass API.\n"
+            f"Error: {str(e)}\n\n"
+            "Please check your internet connection and try again."
+        )
+        print_error_message("NETWORK ERROR", error_msg)
+        sys.exit(1)
+        
+    except Exception as e:
+        error_msg = (
+            f"An unexpected error occurred: {str(e)}\n\n"
+            "Please report this issue if it persists."
+        )
+        print_error_message("UNEXPECTED ERROR", error_msg)
+        sys.exit(1)
