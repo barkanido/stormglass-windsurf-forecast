@@ -2,6 +2,10 @@ import requests
 import arrow
 import json
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Conversion factor: meters per second to knots
 MS_TO_KNOTS = 1.94384
@@ -69,26 +73,24 @@ def convert_time_to_local(hours, timezone='Asia/Jerusalem'):
 
 def get_api_key():
     """
-    Read API key from file with fallback to environment variable.
+    Read API key from environment variable.
+    
+    The API key is loaded from the STORMGLASS_API_KEY environment variable,
+    which can be set in a .env file or directly in the environment.
     
     Returns:
         str: The API key
         
     Raises:
-        ValueError: If API key is not found in either location
+        ValueError: If API key is not found
     """
-    api_key = None
-    try:
-        with open('api_key.txt', 'r') as f:
-            api_key = f.read().strip()
-    except FileNotFoundError:
-        pass
+    api_key = os.environ.get('STORMGLASS_API_KEY')
     
     if not api_key:
-        api_key = os.environ.get('API_KEY')
-    
-    if not api_key:
-        raise ValueError("API key not found. Please provide it in api_key.txt or set the API_KEY environment variable.")
+        raise ValueError(
+            "API key not found. Please set STORMGLASS_API_KEY in your .env file or environment.\n"
+            "See .env.example for the required format."
+        )
     
     return api_key
 
