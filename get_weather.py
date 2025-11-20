@@ -5,9 +5,79 @@ import os
 import argparse
 import sys
 from dotenv import load_dotenv
+from typing import TypedDict
 
 # Load environment variables from .env file
 load_dotenv()
+
+# ============================================================================
+# Type Definitions
+# ============================================================================
+
+class SourceData(TypedDict):
+    """Data from a single source (e.g., 'sg' for StormGlass)"""
+    sg: float
+
+class RawHourlyData(TypedDict, total=False):
+    """Hourly data as received from API (nested structure with sources)"""
+    time: str  # ISO 8601 format (UTC)
+    airTemperature: SourceData
+    gust: SourceData
+    swellDirection: SourceData
+    swellHeight: SourceData
+    swellPeriod: SourceData
+    waterTemperature: SourceData
+    windDirection: SourceData
+    windSpeed: SourceData
+
+class TransformedHourlyData(TypedDict):
+    """Hourly data after flattening and unit conversion"""
+    time: str  # Local timezone format 'YYYY-MM-DD HH:mm'
+    airTemperature: float  # Celsius
+    gust: float  # Knots (converted from m/s)
+    swellDirection: float  # Degrees
+    swellHeight: float  # Meters
+    swellPeriod: float  # Seconds
+    waterTemperature: float  # Celsius
+    windDirection: float  # Degrees
+    windSpeed: float  # Knots (converted from m/s)
+
+class UnitDescriptions(TypedDict):
+    """Unit descriptions for each weather parameter"""
+    windSpeed: str
+    gust: str
+    airTemperature: str
+    swellHeight: str
+    swellPeriod: str
+    swellDirection: str
+    waterTemperature: str
+    windDirection: str
+
+class RawMetaData(TypedDict):
+    """Meta information as received from API"""
+    cost: int
+    dailyQuota: int
+    end: str
+    lat: float
+    lng: float
+    params: list[str]
+    requestCount: int
+    start: str
+
+class TransformedMetaData(RawMetaData):
+    """Meta information with added fields after processing"""
+    report_generated_at: str
+    units: UnitDescriptions
+
+class RawWeatherResponse(TypedDict):
+    """Complete API response structure (raw)"""
+    hours: list[RawHourlyData]
+    meta: RawMetaData
+
+class TransformedWeatherResponse(TypedDict):
+    """Complete response structure after transformation"""
+    hours: list[TransformedHourlyData]
+    meta: TransformedMetaData
 
 # ============================================================================
 # Custom Exceptions
@@ -16,16 +86,11 @@ load_dotenv()
 class StormGlassAPIError(Exception):
     """
     Custom exception for Storm Glass API errors.
-    
-    Attributes:
-        status_code: HTTP status code from the API response
-        error_code: Storm Glass specific error code
-        message: User-friendly error message
     """
-    def __init__(self, status_code, message):
+    def __init__(self, status_code: int, message: str) -> None:
         self.status_code = status_code
-        self.message = message
-        super().__init__(self.message)
+        self.user_friendly_message = message
+        super().__init__(self.user_friendly_message)
 
 # ============================================================================
 # Error Code Mappings
@@ -66,128 +131,87 @@ STORMGLASS_ERROR_MESSAGES = {
 # New functional-style transformation functions (single-pass processing)
 # ============================================================================
 
-def _flatten_hour(hour):
+def _flatten_hour(hour: RawHourlyData) -> dict[str, float | str]:
     """
     Flatten the nested 'sg' structure for a single hour's data.
-    
-    Args:
-        hour: Single hourly weather data dictionary
-        
-    Returns:
-        Dictionary with flattened structure
     """
     return {
         key: value['sg'] if isinstance(value, dict) and 'sg' in value else value 
         for key, value in hour.items()
     }
 
-def _convert_hour_speeds(hour):
+def _convert_hour_speeds(hour: dict[str, float | str]) -> dict[str, float | str]:
     """
     Convert windSpeed and gust from m/s to knots for a single hour.
-    
-    Args:
-        hour: Single hourly weather data dictionary
-        
-    Returns:
-        Dictionary with wind speeds converted to knots
     """
     MS_TO_KNOTS = 1.94384
+    wind_speed_keys = ('windSpeed', 'gust')
     return {
-        key: value * MS_TO_KNOTS if key in ['windSpeed', 'gust'] else value
+        key: (value * MS_TO_KNOTS if isinstance(value, (int, float)) else value) if key in wind_speed_keys else value
         for key, value in hour.items()
     }
 
-def _convert_hour_time(hour, timezone='Asia/Jerusalem'):
+def _convert_hour_time(hour: dict[str, float | str], timezone: str = 'Asia/Jerusalem') -> dict[str, float | str]:
     """
     Convert the time field for a single hour to local time string.
-    
-    Args:
-        hour: Single hourly weather data dictionary with 'time' field in ISO 8601 format
-        timezone: Target timezone (default: 'Asia/Jerusalem')
-        
-    Returns:
-        Dictionary with time converted to local timezone string format 'YYYY-MM-DD HH:mm'
     """
     return {
         **hour,
         'time': arrow.get(hour['time']).to(timezone).format('YYYY-MM-DD HH:mm')
     }
 
-def _transform_hour(hour, timezone='Asia/Jerusalem'):
+def _transform_hour(hour: RawHourlyData, timezone: str = 'Asia/Jerusalem') -> TransformedHourlyData:
     """
     Apply all transformations to a single hour's data.
     
     This combines flattening, speed conversion, and time conversion into
     a single transformation pipeline for efficient processing.
-    
-    Args:
-        hour: Single hourly weather data dictionary
-        timezone: Target timezone (default: 'Asia/Jerusalem')
-        
-    Returns:
-        Fully transformed hourly data dictionary
     """
-    hour = _flatten_hour(hour)
-    hour = _convert_hour_speeds(hour)
-    hour = _convert_hour_time(hour, timezone)
-    return hour
+    flattened = _flatten_hour(hour)
+    with_speeds = _convert_hour_speeds(flattened)
+    transformed = _convert_hour_time(with_speeds, timezone)
+    return transformed  # type: ignore[return-value]
 
-def _process_hours(hours, timezone='Asia/Jerusalem'):
+def _process_hours(hours: list[RawHourlyData], timezone: str = 'Asia/Jerusalem') -> list[TransformedHourlyData]:
     """
     Process all hourly data with transformations in a single pass.
     
     This function efficiently applies all transformations (flattening,
     speed conversion, and time conversion) to each hour in a single
     iteration, rather than making multiple passes over the data.
-    
-    Args:
-        hours: List of hourly weather data dictionaries
-        timezone: Target timezone (default: 'Asia/Jerusalem')
-        
-    Returns:
-        List of fully transformed hourly data dictionaries
     """
     return [_transform_hour(hour, timezone) for hour in hours]
 
-def _update_meta(meta):
+def _update_meta(meta: RawMetaData) -> TransformedMetaData:
     """
     Update the meta information with report generation time and units.
-    
-    Args:
-        meta: Meta information dictionary
-        
-    Returns:
-        Updated meta information dictionary
     """
-    meta['report_generated_at'] = arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm')
-    meta['units'] = {
-        'windSpeed': 'Speed of wind at 10m above ground in knots',
-        'gust': 'Wind gust in knots',
-        'airTemperature': 'Air temperature in degrees celsius',
-        'swellHeight': 'Height of swell waves in meters',
-        'swellPeriod': 'Period of swell waves in seconds',
-        'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
-        'waterTemperature': 'Water temperature in degrees celsius',
-        'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
+    transformed_meta: TransformedMetaData = {
+        **meta,
+        'report_generated_at': arrow.now().to('Asia/Jerusalem').format('YYYY-MM-DD HH:mm'),
+        'units': {
+            'windSpeed': 'Speed of wind at 10m above ground in knots',
+            'gust': 'Wind gust in knots',
+            'airTemperature': 'Air temperature in degrees celsius',
+            'swellHeight': 'Height of swell waves in meters',
+            'swellPeriod': 'Period of swell waves in seconds',
+            'swellDirection': 'Direction of swell waves. 0° indicates swell coming from north',
+            'waterTemperature': 'Water temperature in degrees celsius',
+            'windDirection': 'Direction of wind at 10m above ground. 0° indicates wind coming from north'
+        }
     }
-    return meta
+    return transformed_meta
 
 # ============================================================================
 # Utility functions
 # ============================================================================
 
-def get_api_key():
+def get_api_key() -> str:
     """
     Read API key from environment variable.
     
     The API key is loaded from the STORMGLASS_API_KEY environment variable,
     which can be set in a .env file or directly in the environment.
-    
-    Returns:
-        str: The API key
-        
-    Raises:
-        ValueError: If API key is not found
     """
     api_key = os.environ.get('STORMGLASS_API_KEY')
     
@@ -200,21 +224,9 @@ def get_api_key():
     return api_key
 
 
-def _fetch_weather_data(start, end, api_key, lat, lng):
+def _fetch_weather_data(start: arrow.Arrow, end: arrow.Arrow, api_key: str, lat: float, lng: float) -> RawWeatherResponse:
     """
     Fetch weather data from Storm Glass API.
-    
-    Args:
-        start: Start date/time for the forecast
-        end: End date/time for the forecast
-        api_key: Storm Glass API key
-        lat: Latitude coordinate
-        lng: Longitude coordinate
-        
-    Returns:
-        dict: Weather data JSON response
-        
-    Raises:
         StormGlassAPIError: If the API returns an error status code
     """
     stormglass_endpoint = f"https://api.stormglass.io/v2/weather/point"
@@ -263,23 +275,18 @@ def _fetch_weather_data(start, end, api_key, lat, lng):
     json_data = response.json()
     return json_data
 
-def _write_weather_json(json_data, weather_data_file_name):
+def _write_weather_json(json_data: TransformedWeatherResponse, weather_data_file_name: str) -> None:
     with open(weather_data_file_name, 'w') as f:
         json.dump(json_data, f, indent=4)
 
-def _read_weather_data_file(weather_data_file_name):
+def _read_weather_data_file(weather_data_file_name: str) -> None:
     with open(weather_data_file_name, 'r') as f:
         json_data = json.load(f)
         print(f"Loaded {len(json_data['hours'])} hourly data points from file.")
 
-def print_error_message(error_type, message, error_code=None):
+def _print_error_message(error_type: str, message: str, error_code: int | None = None) -> None:
     """
     Print a nicely formatted error message.
-    
-    Args:
-        error_type: Type of error (e.g., "STORM GLASS API ERROR", "CONFIGURATION ERROR")
-        message: The error message to display
-        error_code: Optional error code to display
     """
     print("\n" + "="*70)
     print(error_type)
@@ -289,15 +296,9 @@ def print_error_message(error_type, message, error_code=None):
     print(f"\n{message}")
     print("\n" + "="*70)
 
-def parse_arguments():
+def _parse_arguments() -> argparse.Namespace:
     """
     Parse and validate command line arguments.
-    
-    Returns:
-        argparse.Namespace: Parsed arguments with days_ahead and first_day_offset
-        
-    Raises:
-        SystemExit: If validation fails
     """
     parser = argparse.ArgumentParser(
         description='Fetch weather forecast data from Storm Glass API',
@@ -358,7 +359,7 @@ Note: days-ahead + first-day-offset must not exceed 7 to ensure reliable forecas
 if __name__ == "__main__":
     try:
         # Parse command line arguments
-        args = parse_arguments()
+        args = _parse_arguments()
         
         # Calculate start and end dates based on arguments
         start = arrow.now().shift(days=args.first_day_offset).floor('day')
@@ -371,25 +372,26 @@ if __name__ == "__main__":
         lng = 34.888722
         # 32°29'12.2"N 34°53'19.4"E
 
-        json_data = _fetch_weather_data(start, end, api_key, lat, lng)
+        raw_data = _fetch_weather_data(start, end, api_key, lat, lng)
 
         # Process all hourly data with transformations in a single pass
-        json_data['hours'] = _process_hours(json_data['hours'])
-
-        json_data['meta'] = _update_meta(json_data['meta'])
+        transformed_data: TransformedWeatherResponse = {
+            'hours': _process_hours(raw_data['hours']),
+            'meta': _update_meta(raw_data['meta'])
+        }
         
         # Generate filename with actual number of days
         weather_data_file_name = 'weather_data_{}d_{}.json'.format(args.days_ahead, start.format("YYMMDD"))
-        _write_weather_json(json_data, weather_data_file_name)
-        print(json_data)
+        _write_weather_json(transformed_data, weather_data_file_name)
+        print(transformed_data)
         _read_weather_data_file(weather_data_file_name)
         
     except StormGlassAPIError as e:
-        print_error_message("STORM GLASS API ERROR", e.message, e.status_code)
+        _print_error_message("STORM GLASS API ERROR", e.user_friendly_message, e.status_code)
         sys.exit(1)
         
     except ValueError as e:
-        print_error_message("CONFIGURATION ERROR", str(e))
+        _print_error_message("CONFIGURATION ERROR", str(e))
         sys.exit(1)
         
     except requests.exceptions.RequestException as e:
@@ -398,7 +400,7 @@ if __name__ == "__main__":
             f"Error: {str(e)}\n\n"
             "Please check your internet connection and try again."
         )
-        print_error_message("NETWORK ERROR", error_msg)
+        _print_error_message("NETWORK ERROR", error_msg)
         sys.exit(1)
         
     except Exception as e:
@@ -406,5 +408,5 @@ if __name__ == "__main__":
             f"An unexpected error occurred: {str(e)}\n\n"
             "Please report this issue if it persists."
         )
-        print_error_message("UNEXPECTED ERROR", error_msg)
+        _print_error_message("UNEXPECTED ERROR", error_msg)
         sys.exit(1)
